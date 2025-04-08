@@ -13,7 +13,7 @@ emo_to_int = {"happy": 0, "tense": 1, "sad": 2, "peaceful": 3}
 
 # Paths
 midi_dir = "data/midis"
-label_csv = "data/label.csv"
+label_csv = r"data\EMOPIA_2.1\label.csv"
 model_path = "outputs/emotion_lstm.pth"
 
 
