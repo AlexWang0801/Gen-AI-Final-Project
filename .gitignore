@@ -1,15 +1,12 @@
-# Ignore virtual environments
 venv/
-
-# Ignore Python cache
 __pycache__/
-*.pyc
-*.pyo
-
-# Ignore large soundfont
 src/outputs/FluidR3_GM.sf2
-
-# Ignore IDE/project files
-.DS_Store
-.idea/
-.vscode/
+goemotions-bert-v2/
+goemotions-bert-mps/
+# Ignore large model and audio files
+*.pth
+*.safetensors
+*.mp3
+*.wav
+*.mid
+*.pt
