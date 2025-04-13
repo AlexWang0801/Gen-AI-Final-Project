@@ -1,12 +1,16 @@
 venv/
 __pycache__/
-src/outputs/FluidR3_GM.sf2
 goemotions-bert-v2/
-goemotions-bert-mps/
+goemotions-bert-v1/
 # Ignore large model and audio files
 *.pth
-*.safetensors
 *.mp3
-*.wav
 *.mid
 *.pt
+*.safetensors
+*.sf2
+*.wav
+*.flac
+*.zip
+*.tar
+*.tar.gz
