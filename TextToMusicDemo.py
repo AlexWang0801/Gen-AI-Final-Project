@@ -3,22 +3,23 @@ import os
 import random
 import json
 import torch
-from transformers import pipeline, BertTokenizerFast, BertForSequenceClassification
-from midi2audio import FluidSynth
-from src.MidiModel import EmotionLSTM
-from src.MidiUtils import create_vocab, sequence_to_midi, load_model
-from src.MidiPreprocess import build_dataset
-from src.MidiGenerate import generate
+from transformers import pipeline
 from sentence_transformers import SentenceTransformer, util
-from pydub import AudioSegment
-import torchaudio
-import torchaudio.transforms as T
-import torch.nn.functional as F
+from audiocraft.models import MusicGen
+from audiocraft.data.audio import audio_write
 
-embedder = SentenceTransformer('all-mpnet-base-v2')
-music_labels = ["happy", "tense", "sad", "peaceful"]
-music_embs = embedder.encode(music_labels, convert_to_tensor=True)
+# --- Page config must come first ---
+st.set_page_config(page_title="🎵 Emotion Music Generator (MusicGen)", layout="centered")
 
+# --- Load emotion labels ---
+with open("data/emotions.txt", "r") as f:
+    emotions = [line.strip() for line in f]
+
+# --- Load per-class optimal thresholds ---
+with open("src/optimal_thresholds.json") as f:
+    thresholds = json.load(f)
+
+# --- Manual mapping to MusicGen prompts ---
 manual_map = {
     "anger": "tense",
     "annoyance": "tense",
@@ -30,28 +31,7 @@ manual_map = {
     "relief": "peaceful"
 }
 
-def map_emotion_to_music_auto(predicted_label: str) -> str:
-    label = predicted_label.lower()
-    if label in manual_map:
-        return manual_map[label]
-    emo_emb = embedder.encode(label, convert_to_tensor=True)
-    cosine_scores = util.cos_sim(emo_emb, music_embs)[0]
-    best_idx = int(torch.argmax(cosine_scores))
-    return music_labels[best_idx]
-
-# --- Page config must come first ---
-st.set_page_config(page_title="🎵 Emotion Music Generator", layout="centered")
-
-# --- Load emotion labels ---
-with open("data/emotions.txt", "r") as f:
-    emotions = [line.strip() for line in f]
-emo_to_int = {"happy": 0, "tense": 1, "sad": 2, "peaceful": 3}
-
-# --- Load per-class optimal thresholds ---
-with open("src/optimal_thresholds.json") as f:
-    thresholds = json.load(f)
-
-# --- Descriptions for UI ---
+# --- Description ---
 emotion_descriptions = {
     "joy": "You're feeling joyful and cheerful! 😊",
     "sadness": "Sounds like you're feeling a bit down. 😢",
@@ -78,57 +58,38 @@ def load_emotion_model():
 
 emotion_classifier = load_emotion_model()
 
-# --- Load music generation model & data ---
-midi_dir = "./data/EMOPIA_2.1/midis/"
-label_csv = "./data/EMOPIA_2.1/label.csv"
-model_path = "./src/outputs/emotion_lstm.pth"
-
-@st.cache_data
-def load_music_resources():
-    data = build_dataset(midi_dir, label_csv)
-    note_sequences = [notes for notes, _ in data]
-    note_to_int, int_to_note = create_vocab(note_sequences)
-    seed = random.choice(note_sequences)
-    return data, note_sequences, note_to_int, int_to_note, seed
-
-def generate(model, seed, emotion_id, length=100, temperature=1.0):
-    model.eval()
-    generated = seed.copy()
-    input_seq = torch.tensor(seed, dtype=torch.long).unsqueeze(0).to(next(model.parameters()).device)
-    emotion_tensor = torch.tensor([emotion_id]).to(input_seq.device)
-
-    for _ in range(length):
-        logits = model(input_seq, emotion_tensor)
-        probs = torch.softmax(logits / temperature, dim=-1)
-        next_note = torch.multinomial(probs, num_samples=1).item()
-        generated.append(next_note)
-        input_seq = torch.tensor(generated[-len(seed):], dtype=torch.long).unsqueeze(0).to(input_seq.device)
-    return generated
-
+# --- MusicGen ---
 @st.cache_resource
-def load_music_model(vocab_size):
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    return load_model(EmotionLSTM, model_path, vocab_size, 64, 128, 16, 4).to(device)
+def load_musicgen_model():
+    return MusicGen.get_pretrained('facebook/musicgen-small')
 
-# --- Music Emotion Recognition Stub (simulated with SentenceTransformer for now) ---
-def evaluate_music_emotion(wav_path):
-    # simulate by checking semantic match
-    audio_desc = f"This music feels {os.path.basename(wav_path).split('_')[0]}"
-    audio_emb = embedder.encode(audio_desc, convert_to_tensor=True)
-    user_emotion_emb = embedder.encode(user_input, convert_to_tensor=True)
-    return float(util.cos_sim(audio_emb, user_emotion_emb)[0][0])
+musicgen = load_musicgen_model()
+
+# --- Embedding for emotion similarity ---
+embedder = SentenceTransformer('all-mpnet-base-v2')
+music_labels = ["happy", "tense", "sad", "peaceful"]
+music_embs = embedder.encode(music_labels, convert_to_tensor=True)
+
+def map_emotion_to_music_auto(predicted_label: str) -> str:
+    label = predicted_label.lower()
+    if label in manual_map:
+        return manual_map[label]
+    emo_emb = embedder.encode(label, convert_to_tensor=True)
+    cosine_scores = util.cos_sim(emo_emb, music_embs)[0]
+    best_idx = int(torch.argmax(cosine_scores))
+    return music_labels[best_idx]
 
 # --- UI ---
-st.title("🎵 Emotion-to-Music Generator")
+st.title("🎵 Emotion-to-Music Generator (with MusicGen)")
 st.markdown("""
 Enter a sentence describing how you feel, and this app will:
 1. Detect your emotion using a fine-tuned BERT model 🤖  
-2. Generate a piece of music that matches your mood 🎶  
+2. Generate a piece of **audio** music with Meta's MusicGen 🎶  
 3. Let you listen to and download your emotional melody 🎧  
 """)
 
 user_input = st.text_area("💬 What are you feeling?", placeholder="e.g. I feel calm and peaceful watching the rain fall...")
-temperature = st.slider("🎛️ Creativity Level (Higher = More Variation)", min_value=0.7, max_value=1.5, value=1.0, step=0.1)
+duration = st.slider("🎛️ Music Duration (seconds)", min_value=5, max_value=30, value=10, step=5)
 
 if user_input:
     with st.spinner("🔍 Detecting emotion..."):
@@ -153,22 +114,13 @@ if user_input:
     st.markdown(f"🎼 Mapped emotion `{primary_emotion}` → **{emotion_label.capitalize()}** for music generation 🎵")
 
     if st.button("🎶 Generate Music"):
-        with st.spinner("🎼 Composing your emotional melody..."):
-            data, note_sequences, note_to_int, int_to_note, seed = load_music_resources()
-            random_start = random.randint(0, max(0, len(seed) - 32))
-            seed_encoded = [note_to_int[n] for n in seed[random_start:random_start + 32]]
-            model = load_music_model(len(note_to_int))
-            result_sequence = generate(model, seed_encoded, emo_to_int[emotion_label], length=100, temperature=temperature)
-
-            midi_output_path = f"outputs/{emotion_label}_streamlit.mid"
-            wav_output_path = f"outputs/{emotion_label}_streamlit.wav"
-            sequence_to_midi(result_sequence, int_to_note, midi_output_path)
-            fs = FluidSynth(sound_font="src/outputs/FluidR3_GM.sf2")
-            fs.midi_to_audio(midi_output_path, wav_output_path)
+        with st.spinner("🎼 Generating high-quality music with MusicGen..."):
+            musicgen.set_generation_params(duration=duration)
+            output = musicgen.generate([f"{emotion_label} emotional background music"])
+            output_path = f"outputs/{emotion_label}_musicgen.wav"
+            audio_write(output_path[:-4], output[0].cpu(), sample_rate=32000)
 
         st.success("✅ Your music is ready!")
-        st.audio(wav_output_path)
-        similarity = evaluate_music_emotion(wav_output_path)
-        st.metric("🧠 Music-Emotion Alignment Score", f"{similarity:.2f}")
-        with open(midi_output_path, "rb") as f:
-            st.download_button("⬇️ Download MIDI", f, file_name=os.path.basename(midi_output_path))
+        st.audio(output_path)
+        with open(output_path, "rb") as f:
+            st.download_button("⬇️ Download WAV", f, file_name=os.path.basename(output_path))
