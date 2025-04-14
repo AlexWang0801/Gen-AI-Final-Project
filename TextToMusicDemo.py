@@ -7,6 +7,9 @@ from transformers import pipeline
 from sentence_transformers import SentenceTransformer, util
 from audiocraft.models import MusicGen
 from audiocraft.data.audio import audio_write
+from transformers import ClapProcessor, ClapModel
+import torchaudio
+import torchaudio.transforms as T
 
 # --- Page config must come first ---
 st.set_page_config(page_title="🎵 Emotion Music Generator (MusicGen)", layout="centered")
@@ -79,6 +82,14 @@ def map_emotion_to_music_auto(predicted_label: str) -> str:
     best_idx = int(torch.argmax(cosine_scores))
     return music_labels[best_idx]
 
+@st.cache_resource
+def load_clap_model():
+    processor = ClapProcessor.from_pretrained("laion/clap-htsat-fused")
+    model = ClapModel.from_pretrained("laion/clap-htsat-fused")
+    return processor, model
+
+clap_processor, clap_model = load_clap_model()
+
 # --- UI ---
 st.title("🎵 Emotion-to-Music Generator (with MusicGen)")
 st.markdown("""
@@ -89,7 +100,24 @@ Enter a sentence describing how you feel, and this app will:
 """)
 
 user_input = st.text_area("💬 What are you feeling?", placeholder="e.g. I feel calm and peaceful watching the rain fall...")
-duration = st.slider("🎛️ Music Duration (seconds)", min_value=5, max_value=30, value=10, step=5)
+duration = 20  # fixed to 20 seconds
+
+# Text ↔ Emotion label similarity
+def text_to_label_similarity(user_input: str, emotion_label: str) -> float:
+    text_emb = embedder.encode(user_input, convert_to_tensor=True)
+    label_emb = embedder.encode(emotion_label, convert_to_tensor=True)
+    return float(util.cos_sim(text_emb, label_emb)[0][0])
+
+# Audio ↔ Emotion label similarity using CLAP (resample to 48kHz)
+def audio_to_label_similarity(audio_path: str, emotion_label: str) -> float:
+    waveform, original_rate = torchaudio.load(audio_path)
+    if original_rate != 48000:
+        resampler = T.Resample(orig_freq=original_rate, new_freq=48000)
+        waveform = resampler(waveform)
+    with torch.no_grad():
+        audio_emb = clap_model.get_audio_features(clap_processor(audios=waveform, sampling_rate=48000, return_tensors="pt"))
+        text_emb = clap_model.get_text_features(clap_processor(text=[emotion_label], return_tensors="pt", padding=True))
+    return float(torch.nn.functional.cosine_similarity(audio_emb, text_emb)[0])
 
 if user_input:
     with st.spinner("🔍 Detecting emotion..."):
@@ -124,3 +152,9 @@ if user_input:
         st.audio(output_path)
         with open(output_path, "rb") as f:
             st.download_button("⬇️ Download WAV", f, file_name=os.path.basename(output_path))
+
+        similarity_text = text_to_label_similarity(user_input, emotion_label)
+        similarity_audio = audio_to_label_similarity(output_path, emotion_label)
+
+        st.metric("🧠 Text-to-Label Similarity", f"{similarity_text:.2f}")
+        st.metric("🎧 Audio-to-Label Similarity", f"{similarity_audio:.2f}")
