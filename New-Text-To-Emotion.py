@@ -22,13 +22,21 @@ MUSIC_MODEL = "facebook/musicgen-small"  # MusicGen model to use locally
 DEFAULT_DURATION = 15  # Default music duration in seconds
 
 # List of all available emotions for Llama 3 to choose from
-all_emotions = list(complex_emotion_map.keys())
+all_emotions = sorted(list(complex_emotion_map.keys()))
+
 # --- Page config must come first ---
 st.set_page_config(
-    page_title="🎵 Emotion Music Generator (API Version)", 
+    page_title="🎵 Emotion Music Generator", 
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Initialize session state variables
+if 'manual_emotions_applied' not in st.session_state:
+    st.session_state.manual_emotions_applied = False
+    
+if 'emotions_analyzed' not in st.session_state:
+    st.session_state.emotions_analyzed = False
 
 def detect_complex_emotion_with_api(text):
     """
@@ -169,7 +177,6 @@ Context: [brief explanation of your analysis]"""
             
             except Exception as e:
                 st.warning(f"Error parsing response: {str(e)}")
-                st.caption(f"Raw response: {assistant_message}")
                 print(f"Error parsing response: {str(e)}", file=sys.stderr)
             
             return result
@@ -260,14 +267,15 @@ def generate_musicgen_prompt(emotion_result, text_input):
     closest_intensity = min(intensity_levels, key=lambda x: abs(x - emotional_intensity))
     intensity_phrase = intensity_phrases[closest_intensity]
     
-    # Extract key words from original text
-    words = text_input.lower().split()
-    descriptive_words = [word for word in words if len(word) > 4 and word not in 
-                         ["about", "above", "across", "after", "against", "along", "among", "around"]]
+    # Extract key words from original text if available
     text_context = ""
-    if descriptive_words:
-        selected_words = random.sample(descriptive_words, min(2, len(descriptive_words)))
-        text_context = f" with elements of {' and '.join(selected_words)}"
+    if text_input and text_input != "Custom emotion selection":
+        words = text_input.lower().split()
+        descriptive_words = [word for word in words if len(word) > 4 and word not in 
+                             ["about", "above", "across", "after", "against", "along", "among", "around"]]
+        if descriptive_words:
+            selected_words = random.sample(descriptive_words, min(2, len(descriptive_words)))
+            text_context = f" with elements of {' and '.join(selected_words)}"
     
     # Build the prompt
     prompt = f"{genre} music with {', '.join(selected_instruments)}. {base_prompt}{text_context}. "
@@ -298,9 +306,9 @@ def load_musicgen_model():
         # Re-raise exception so it's caught by the caller
         raise e
 
-# Function to display emotion analysis results
+# Function to display emotion analysis results with intensity bars
 def display_emotion_analysis(emotion_result):
-    """Display the emotion analysis results in the UI"""
+    """Display the emotion analysis results in the UI with descriptions and intensity bars for both emotions"""
     primary_emotion = emotion_result["primary"]
     secondary_emotion = emotion_result["secondary"]
     intensity = emotion_result["intensity"]
@@ -308,30 +316,48 @@ def display_emotion_analysis(emotion_result):
     # Get descriptions for display
     primary_desc = complex_emotion_map.get(primary_emotion, {}).get("description", primary_emotion.capitalize())
     
-    # Display simplified emotional analysis results
-    st.markdown(f"### Detected Emotion: {primary_emotion.capitalize()}")
-    st.markdown(f"**Description**: {primary_desc}")
-    st.markdown(f"**Emotional Intensity**: {intensity:.2f}")
+    # Create columns for layout
+    col1, col2 = st.columns(2)
     
-    if secondary_emotion:
-        secondary_desc = complex_emotion_map.get(secondary_emotion, {}).get("description", secondary_emotion.capitalize())
-        st.markdown(f"**Secondary Emotion**: {secondary_emotion.capitalize()} - {secondary_desc}")
+    # Primary emotion in first column
+    with col1:
+        st.markdown("### Primary Emotion")
+        st.markdown(f"**{primary_emotion.capitalize()}** (Intensity: {intensity:.2f})")
+        st.markdown(f"*{primary_desc}*")
+        
+        # Create intensity bar for primary emotion
+        st.progress(intensity)
+    
+    # Secondary emotion in second column (if exists)
+    with col2:
+        if secondary_emotion:
+            secondary_desc = complex_emotion_map.get(secondary_emotion, {}).get("description", secondary_emotion.capitalize())
+            # Calculate secondary intensity (typically lower than primary)
+            secondary_intensity = max(0.2, intensity * 0.6)  # Scale secondary emotion intensity
+            
+            st.markdown("### Secondary Emotion")
+            st.markdown(f"**{secondary_emotion.capitalize()}** (Intensity: {secondary_intensity:.2f})")
+            st.markdown(f"*{secondary_desc}*")
+            
+            # Create intensity bar for secondary emotion
+            st.progress(secondary_intensity)
+        else:
+            st.markdown("### Secondary Emotion")
+            st.markdown("*No secondary emotion detected*")
+            
+            # Empty/zero intensity bar for visual consistency
+            st.progress(0.0)
 
-# Function to generate and display music - FIXED VERSION
+# Function to generate and play music with a simplified UI layout
 def generate_and_display_music(emotion_result, text_input, duration):
     """Generate and display music based on emotion analysis"""
     if 'musicgen_loaded' not in st.session_state:
         st.warning("⚠️ Please load the MusicGen model first using the button in the sidebar")
         return
     
-    with st.spinner("Creating emotionally resonant music..."):
-        # Create outputs directory if it doesn't exist
-        os.makedirs("outputs", exist_ok=True)
-        
+    with st.spinner("🎼 Generating high-quality music with MusicGen..."):
         # Generate music prompt
         detailed_prompt = generate_musicgen_prompt(emotion_result, text_input)
-        
-        st.info(f"**MusicGen Prompt:**\n{detailed_prompt}")
         
         try:
             # Generate music with more error handling
@@ -339,86 +365,65 @@ def generate_and_display_music(emotion_result, text_input, duration):
             
             print(f"Generating music with duration: {duration} seconds...", file=sys.stderr)
             
-            # Set generation parameters more safely
+            # Set generation parameters
             try:
                 musicgen.set_generation_params(duration=duration)
             except Exception as e:
-                st.warning(f"Could not set generation parameters: {str(e)}. Using defaults.")
                 print(f"Error setting generation params: {str(e)}", file=sys.stderr)
             
             # Generate the music
             output = musicgen.generate([detailed_prompt])
             print("Music generation complete!", file=sys.stderr)
             
-            # Create filename based on emotions
-            primary_emotion = emotion_result["primary"]
-            secondary_emotion = emotion_result["secondary"]
-            intensity = emotion_result["intensity"]
+            # Display audio directly in UI
+            import numpy as np
             
-            emotion_str = f"{primary_emotion}"
-            if secondary_emotion:
-                emotion_str += f"_{secondary_emotion}"
-            output_path = f"outputs/{emotion_str}_intensity{int(intensity*10)}.wav"
+            # Get the audio as numpy array
+            audio_array = output[0].cpu().numpy()
             
-            # Save and display
-            print(f"Saving music to: {output_path}", file=sys.stderr)
-            audio_write(output_path[:-4], output[0].cpu(), sample_rate=32000)
-            st.audio(output_path)
+            # Store the audio data in session state (to keep it available)
+            st.session_state['generated_audio'] = audio_array
             
-            # Download button
-            with open(output_path, "rb") as f:
-                st.download_button("⬇️ Download Music", f, file_name=os.path.basename(output_path))
+            # Display success message
+            st.success("✅ Your music is ready! Play it below:")
+            
+            # Create a container for the audio player (makes it more prominent)
+            audio_container = st.container()
+            with audio_container:
+                # Display using built-in audio component with custom sampling rate
+                st.audio(audio_array, sample_rate=32000)
+            
+            # Display the music prompt details in expander
+            with st.expander("🎵 Music generation details"):
+                st.markdown(f"**Prompt used:** {detailed_prompt}")
                 
         except Exception as e:
             st.error(f"Error generating music: {str(e)}")
             print(f"Error in music generation: {str(e)}", file=sys.stderr)
             return
-        
-    # Show musical characteristics
-    with st.expander("🎼 Musical Characteristics"):
-        st.markdown("### How the emotion was translated to music")
-        
-        if secondary_emotion:
-            st.markdown(f"### Blended emotion: {primary_emotion} + {secondary_emotion}")
-            
-            # Get both emotion data
-            primary_data = complex_emotion_map.get(primary_emotion, complex_emotion_map["neutral"])
-            secondary_data = complex_emotion_map.get(secondary_emotion, complex_emotion_map["neutral"])
-            
-            # Create a two-column comparison
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"**Primary Emotion ({primary_emotion})**")
-                st.markdown(f"**Base Prompt**: {primary_data['prompt']}")
-                st.markdown(f"**Genres**: {', '.join(primary_data['genre'])}")
-                st.markdown(f"**Instruments**: {', '.join(primary_data['instruments'])}")
-                st.markdown(f"**Tempo**: {primary_data['tempo']}")
-                st.markdown(f"**Tonality**: {primary_data['tonality']}")
-            
-            with col2:
-                st.markdown(f"**Secondary Emotion ({secondary_emotion})**")
-                st.markdown(f"**Base Prompt**: {secondary_data['prompt']}")
-                st.markdown(f"**Genres**: {', '.join(secondary_data['genre'])}")
-                st.markdown(f"**Instruments**: {', '.join(secondary_data['instruments'])}")
-                st.markdown(f"**Tempo**: {secondary_data['tempo']}")
-                st.markdown(f"**Tonality**: {secondary_data['tonality']}")
-        else:
-            # Get emotion data for a single emotion
-            emotion_data = complex_emotion_map.get(primary_emotion, complex_emotion_map["neutral"])
-            
-            # Display in a nice format
-            st.markdown(f"### {primary_emotion.capitalize()}")
-            st.markdown(f"**Base Prompt**: {emotion_data['prompt']}")
-            st.markdown(f"**Genres**: {', '.join(emotion_data['genre'])}")
-            st.markdown(f"**Instruments**: {', '.join(emotion_data['instruments'])}")
-            st.markdown(f"**Tempo**: {emotion_data['tempo']}")
-            st.markdown(f"**Tonality**: {emotion_data['tonality']}")
+
+# Main UI layout
+st.title("🎵 Emotion Music Generator")
+st.markdown("""
+Enter a sentence describing how you feel, and this app will:
+1. Detect your emotion using Llama 3 🤖
+2. Generate a piece of **audio** music with Meta's MusicGen 🎶
+3. Let you listen to and download your emotional melody 🎧
+""")
+
+# Text input area
+user_input = st.text_area(
+    "💬 What are you feeling?",
+    placeholder="e.g., I feel calm and peaceful watching the rain fall...",
+    height=150
+)
+
+# Place duration slider in the main UI rather than sidebar
+duration = st.slider("🕒 Music Duration (seconds)", min_value=5, max_value=30, value=DEFAULT_DURATION, step=5)
 
 # Sidebar for settings
 with st.sidebar:
     st.title("⚙️ Settings")
-    
-    duration = st.slider("Music Duration (seconds)", min_value=5, max_value=30, value=DEFAULT_DURATION, step=5)
     
     # Advanced emotion settings
     st.subheader("Emotion Processing")
@@ -427,13 +432,45 @@ with st.sidebar:
     
     # Only show these if manual override is checked
     if manual_override:
-        all_emotions = sorted(list(complex_emotion_map.keys()))
-        selected_emotion = st.selectbox("Primary Emotion", all_emotions)
-        secondary_emotion = st.selectbox("Secondary Emotion (optional)", ["None"] + all_emotions)
+        # Define variables for manual emotion selection
+        selected_emotion = st.selectbox("Primary Emotion", all_emotions, index=0)
+        secondary_emotion = st.selectbox("Secondary Emotion (optional)", ["None"] + all_emotions, index=0)
         secondary_emotion = None if secondary_emotion == "None" else secondary_emotion
         emotion_intensity = st.slider("Emotional Intensity", min_value=0.0, max_value=1.0, value=0.7, step=0.1)
+        
+        # Store in session state for persistence
+        st.session_state.selected_emotion = selected_emotion
+        st.session_state.secondary_emotion = secondary_emotion
+        st.session_state.emotion_intensity = emotion_intensity
+        
+        # Add a confirmation button with more emphasis
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Confirm", type="primary"):
+                emotion_result = {
+                    "primary": selected_emotion,
+                    "secondary": secondary_emotion,
+                    "intensity": emotion_intensity,
+                    "context": "Manually selected emotions"
+                }
+                st.session_state.emotion_result = emotion_result
+                st.session_state.manual_emotions_applied = True
+                # Turn off the regular analysis flag when manual is applied
+                st.session_state.emotions_analyzed = False
+                st.success("Emotions confirmed!")
+        
+        # Add a reset button as well
+        with col2:
+            if st.button("Reset"):
+                st.session_state.manual_emotions_applied = False
+                st.session_state.emotions_analyzed = False
+                st.session_state.emotion_result = None
+                st.info("Manual emotions reset")
+    else:
+        # Reset the flag when manual override is turned off
+        st.session_state.manual_emotions_applied = False
     
-    # Separate button for loading MusicGen - with better error handling
+    # Separate button for loading MusicGen
     st.subheader("Music Generation")
     load_musicgen_button = st.button("Load MusicGen Model")
     musicgen_status = st.empty()
@@ -452,141 +489,27 @@ with st.sidebar:
     elif 'musicgen_loaded' in st.session_state:
         musicgen_status.success("✅ MusicGen model is loaded")
 
-
-# Main application UI
-st.title("🎵 Emotion Music Generator")
-st.markdown("""
-This application generates music that matches the emotional nuance of your text, including complex
-and ambiguous emotions like nostalgia, anticipation, or melancholy.
-
-### How it works:
-1. 🦙 **Llama** analyzes your text for emotions
-2. 🎭 The system maps your emotional state to musical characteristics
-3. 🎶 **MusicGen** generates a music piece based on the emotional qualities
-""")
-
-# Text input area
-user_input = st.text_area(
-    "💬 Express yourself - what are you feeling?",
-    placeholder="e.g., I feel a strange mixture of nostalgia and hope as I look through these old photographs...",
-    height=150
-)
-
-# Set user_input from session state if it exists (for examples)
-if "user_input" in st.session_state:
-    user_input = st.session_state.user_input
-    # Clear it so it doesn't persist
-    del st.session_state.user_input
-
-# STEP 1: Analyze Emotion Button
-if st.button("🔍 Analyze Emotion") and user_input:
-    # Validate API key before making requests
-    try:
-        # Simple validation request to ensure API key works
-        test_headers = {
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        test_payload = {
-            "model": LLM_MODEL,
-            "messages": [
-                {"role": "user", "content": "Test message"}
-            ],
-            "max_tokens": 10
-        }
-        
-        with st.spinner("Validating API connection..."):
-            test_response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=test_headers,
-                json=test_payload
-            )
-        
-        # If we got here without an exception, the API key is working
-        
-        # Get emotion analysis
-        with st.spinner("Analyzing emotions..."):
-            if manual_override:
-                # Use manually selected emotions
-                emotion_result = {
-                    "primary": selected_emotion,
-                    "secondary": secondary_emotion,
-                    "intensity": emotion_intensity,
-                    "context": "Manually selected emotions"
-                }
-            else:
-                # Get emotion analysis from API
-                emotion_result = detect_complex_emotion_with_api(user_input)
-        
-        # Store the emotion result in session state for later use
-        st.session_state.emotion_result = emotion_result
-        st.session_state.analyzed_text = user_input
-        
-        # Display emotion analysis
-        display_emotion_analysis(emotion_result)
-        
-        # Show a message to load MusicGen if not loaded
-        if 'musicgen_loaded' not in st.session_state:
-            st.info("👈 Now load the MusicGen model from the sidebar to generate music based on this emotion")
-                
-    except requests.exceptions.RequestException as e:
-        st.error(f"API connection failed: {str(e)}")
-        st.info("Please check that your API key is correct and that you have an active internet connection.")
-
-# STEP 2: Generate Music Button (only show if emotion has been analyzed)
-elif 'emotion_result' in st.session_state:
-    # Display the previously analyzed emotion
-    st.subheader("🔍 Previously Analyzed Emotion")
+# Display manual emotions if they've been confirmed
+if st.session_state.get('manual_emotions_applied', False) and 'emotion_result' in st.session_state:
+    st.subheader("🎯 Confirmed Emotions:")
     display_emotion_analysis(st.session_state.emotion_result)
     
-    # Generate music button
-    if st.button("🎵 Generate Music Based on Emotion") and 'musicgen_loaded' in st.session_state:
+    # Add a generate music button right after the confirmed emotions
+    if st.button("🎵 Generate Music Based on Selected Emotions") and 'musicgen_loaded' in st.session_state:
         generate_and_display_music(
             st.session_state.emotion_result, 
-            st.session_state.analyzed_text, 
+            "Custom emotion selection", # Using a placeholder text since it's manual
             duration
         )
     elif 'musicgen_loaded' not in st.session_state:
         st.info("👈 Please load the MusicGen model from the sidebar first")
 
-# Add examples at the bottom with clickable buttons
-with st.expander("📝 Example Texts to Try"):
-    st.markdown("**Click on an example to view it, then copy and paste it into the text area above:**")
-    
-    examples = [
-        "I feel a bittersweet nostalgia as I look through old photographs, remembering good times while also feeling the passage of time.",
-        "I'm filled with anticipation and excitement about my upcoming journey, though there's a hint of nervousness too.",
-        "I feel completely at peace watching the sunset by the ocean, with a gentle breeze and the sound of waves.",
-        "I'm experiencing a complex mix of pride and melancholy as my child leaves for college - happy for their future but sad about the change.",
-        "I feel conflicted about my career decision - part of me is excited for new opportunities while another part fears leaving my comfort zone.",
-        "I'm filled with awe looking at the night sky, feeling small yet connected to something vast and beautiful."
-    ]
-    
-    # Initialize state for showing examples if not already present
-    if "show_example" not in st.session_state:
-        st.session_state.show_example = None
-    
-    # Create a grid of example buttons
-    cols = st.columns(2)
-    for i, example in enumerate(examples):
-        with cols[i % 2]:
-            if st.button(f"Example {i+1}", key=f"example_{i}"):
-                st.session_state.show_example = i
-    
-    # Show the selected example if any
-    if st.session_state.show_example is not None:
-        example_index = st.session_state.show_example
-        st.markdown(f"**Example {example_index+1}:**")
-        st.text_area("Copy this text:", value=examples[example_index], height=100, key=f"example_text_{example_index}")
-# Add a simple test for the API key at the bottom for debugging
-with st.expander("🔧 Debug Information"):
-    st.markdown("### API and Model Information")
-    st.markdown(f"**LLM Model**: {LLM_MODEL}")
-    st.markdown(f"**Music Model**: {MUSIC_MODEL}")
-    
-    if st.button("Test API Connection"):
+# STEP 1: Analyze Emotion Button (only if no manual emotions applied or if we have user input)
+elif user_input and not st.session_state.get('manual_emotions_applied', False):
+    if st.button("🔍 Analyze Emotion"):
+        # Validate API key before making requests
         try:
+            # Simple validation request to ensure API key works
             test_headers = {
                 "Authorization": f"Bearer {API_KEY}",
                 "Content-Type": "application/json"
@@ -595,43 +518,74 @@ with st.expander("🔧 Debug Information"):
             test_payload = {
                 "model": LLM_MODEL,
                 "messages": [
-                    {"role": "user", "content": "Hello"}
+                    {"role": "user", "content": "Test message"}
                 ],
                 "max_tokens": 10
             }
             
-            with st.spinner("Testing API connection..."):
+            with st.spinner("Validating API connection..."):
                 test_response = requests.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers=test_headers,
                     json=test_payload
                 )
-                
-                if test_response.status_code == 200:
-                    st.success(f"✅ API connection successful! (Status code: {test_response.status_code})")
-                    st.json(test_response.json())
-                else:
-                    st.error(f"❌ API connection failed with status code: {test_response.status_code}")
-                    st.text(test_response.text)
-                    
-        except Exception as e:
-            st.error(f"❌ Error testing API connection: {str(e)}")
-    
-    # Add MusicGen version check
-    st.markdown("### MusicGen Version Check")
-    if st.button("Check AudioCraft Version"):
-        try:
-            import pkg_resources
-            try:
-                ac_version = pkg_resources.get_distribution("audiocraft").version
-                st.info(f"AudioCraft version: {ac_version}")
-            except pkg_resources.DistributionNotFound:
-                st.warning("AudioCraft package not found or version not available")
             
-            st.info("Try this command to install the latest compatible version:")
-            st.code("pip install audiocraft==1.0.0 --no-deps")
-        except Exception as e:
-            st.error(f"Error checking package versions: {str(e)}")
+            # If we got here without an exception, the API key is working
+            
+            # Get emotion analysis
+            with st.spinner("Analyzing emotions..."):
+                emotion_result = detect_complex_emotion_with_api(user_input)
+            
+            # Store the emotion result in session state for later use
+            st.session_state.emotion_result = emotion_result
+            st.session_state.analyzed_text = user_input
+            st.session_state.emotions_analyzed = True
+            
+            # Force a rerun to update the UI
+            st.rerun()
+                    
+        except requests.exceptions.RequestException as e:
+            st.error(f"API connection failed: {str(e)}")
+            st.info("Please check that your API key is correct and that you have an active internet connection.")
+
+# Display the analyzed emotions if they exist
+if st.session_state.get('emotions_analyzed', False) and 'emotion_result' in st.session_state and not st.session_state.get('manual_emotions_applied', False):
+    st.subheader("🔍 Detected Emotions:")
+    display_emotion_analysis(st.session_state.emotion_result)
+    
+    # Show a message to load MusicGen if not loaded
+    if 'musicgen_loaded' not in st.session_state:
+        st.info("👈 Now load the MusicGen model from the sidebar to generate music based on this emotion")
+    else:
+        # Generate music button - SEPARATE FROM THE ANALYSIS BUTTON
+        if st.button("🎵 Generate Music Based on Detected Emotions"):
+            generate_and_display_music(
+                st.session_state.emotion_result, 
+                st.session_state.analyzed_text, 
+                duration
+            )
+
+# Add examples at the bottom
+with st.expander("📝 Example Texts to Try (Click to Copy)"):
+    st.markdown("**Copy any example below and paste it into the text area above:**")
+    
+    examples = [
+        "I feel a bittersweet nostalgia as I look through old photographs, remembering good times while also feeling the passage of time.",
+        "I'm filled with anticipation and excitement about my upcoming journey, though there's a hint of nervousness too.",
+        "I feel completely at peace watching the sunset by the ocean, with a gentle breeze and the sound of waves.",
+        "I'm experiencing a complex mix of pride and melancholy as my child leaves for college - happy for their future but sad about the change.",
+        "I feel conflicted about my career decision - part of me is excited for new opportunities while another part fears leaving my comfort zone.",
+        "I'm filled with awe looking at the night sky, feeling small yet connected to something vast and beautiful.",
+        "Finally submitted that project at work today. Everyone congratulated me, but I can't help wondering if I could have done better if I'd had more time.",
+        "Had coffee with Alex this morning. We talked about the old days and caught up on life. It's been three years since we last met in person.",
+        "Mom called to tell me they're selling the house. I've known it was coming, but hearing it made it real."
+    ]
+    
+    # Display each example as text
+    for i, example in enumerate(examples):
+        st.markdown(f"**Example {i+1}:**")
+        st.text(example)
+        st.markdown("---")
 
 if __name__ == "__main__":
     # The app is already running if this script is executed directly
