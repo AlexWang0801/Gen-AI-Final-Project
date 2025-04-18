@@ -1,6 +1,7 @@
-torch==2.1.0
+torch
 torchvision
 torchaudio
 streamlit
 sentence-transformers
-git+https://github.com/facebookresearch/audiocraft.git
+audiocraft
+music12
