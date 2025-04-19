@@ -45,6 +45,3 @@ Follow these steps to set up the project on your local machine:
 3. Run the Streamlit app:
    ```bash
    streamlit run EmotionBasedMusicGen.py
-   
-
-
