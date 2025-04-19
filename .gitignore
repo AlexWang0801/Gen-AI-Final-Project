@@ -3,13 +3,9 @@ __pycache__/
 goemotions-bert-v2/
 goemotions-bert-v1/
 # Ignore large model and audio files
-*.pth
-*.mp3
-*.mid
 *.pt
 *.safetensors
 *.sf2
-*.wav
 *.flac
 *.zip
 *.tar
