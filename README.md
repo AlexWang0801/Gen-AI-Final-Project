@@ -30,17 +30,6 @@ The **Gen-AI-Final-Project** explores advanced concepts in Generative Artificial
 - When you run the model for the first time, click on the load MusicGen Model button. 
 - Then click the Generate Music Based on Detected Emotions button, and enjoy the music!
 
-## Technologies Used
-
-This project leverages the following technologies:
-
-- **Python** (81.7%): Core programming language for the project.
-- **Jupyter Notebook** (18.3%): For interactive code, visualizations, and experimentation.
-- Popular AI/ML libraries such as:
-  - **PyTorch** or **TensorFlow** (add specifics if applicable).
-  - **NumPy**, **Pandas** for data manipulation.
-  - **Matplotlib**, **Seaborn** for visualizations.
-
 ## Installation
 
 Follow these steps to set up the project on your local machine:
@@ -48,3 +37,14 @@ Follow these steps to set up the project on your local machine:
 1. Clone the repository:
    ```bash
    git clone https://github.com/AlexWang0801/Gen-AI-Final-Project.git
+
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+
+3. Run the Streamlit app:
+   ```bash
+   streamlit run EmotionBasedMusicGen.py
+   
+
+
