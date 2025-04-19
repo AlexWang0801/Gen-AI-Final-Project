@@ -33,7 +33,7 @@ class PositionalEncoding(nn.Module):
         pe = torch.zeros(max_len, 1, d_model)
         pe[:, 0, 0::2] = torch.sin(position * div_term)
         pe[:, 0, 1::2] = torch.cos(position * div_term)
-        self.register_buffer('pe', pe) # Not a model parameter
+        self.register_buffer('pe', pe)
 
     def forward(self, x):
         """
@@ -60,7 +60,7 @@ class EmotionTransformer(nn.Module):
             nhead=nhead,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
-            batch_first=True # Input shape (batch, seq, feature)
+            batch_first=True
         )
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer,
@@ -94,31 +94,26 @@ class EmotionTransformer(nn.Module):
             Tensor, shape [batch_size, vocab_size] - Logits for the next note prediction
         """
         # 1. Embeddings
-        note_emb = self.note_embed(notes) * math.sqrt(self.embed_dim) # Scale embedding (common practice)
+        note_emb = self.note_embed(notes) * math.sqrt(self.embed_dim)
 
         # --- Combine with Emotion Embedding ---
         # Add emotion embedding
-        # Unsqueeze emotion embedding to match note_emb dimensions for broadcasting
-        emotion_emb = self.emotion_embed(emotions).unsqueeze(1) # [batch_size, 1, embed_dim]
-        combined_emb = note_emb + emotion_emb # Broadcasting adds emotion to each note position
+        emotion_emb = self.emotion_embed(emotions).unsqueeze(1)
+        combined_emb = note_emb + emotion_emb
 
         # 2. Add Positional Encoding
         pos_encoded_emb = self.pos_encoder(combined_emb) # Input: [batch, seq, feature]
 
         # 3. Generate Causal Mask
-        # Mask should prevent attending to future tokens
-        # Shape: [seq_len, seq_len]
         seq_len = notes.size(1)
         device = notes.device
         causal_mask = self._generate_square_subsequent_mask(seq_len).to(device)
 
         # 4. Transformer Encoder
-        # Input: [batch, seq, feature], Mask: [seq, seq]
         transformer_output = self.transformer_encoder(pos_encoded_emb, mask=causal_mask)
-        # Output shape: [batch, seq, feature]
 
         # 5. Final Prediction Layer
-        last_token_output = transformer_output[:, -1, :] # Shape: [batch_size, embed_dim]
-        logits = self.fc_out(last_token_output) # Shape: [batch_size, vocab_size]
+        last_token_output = transformer_output[:, -1, :]
+        logits = self.fc_out(last_token_output)
 
         return logits

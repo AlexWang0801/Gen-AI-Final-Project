@@ -9,7 +9,7 @@ from collections import defaultdict
 # --- Configuration ---
 # Adjust this path to where your generated MIDI files are stored
 # Assume a structure like: base_dir / model_name / emotion_name / file.mid
-MIDI_BASE_DIR = './generated_midi_files' # <--- CHANGE THIS PATH
+MIDI_BASE_DIR = 'evaluation_output'
 
 # List of models and emotions you generated files for
 MODELS = ['EmotionLSTM', 'EmotionTransformer']
