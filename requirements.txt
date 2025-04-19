@@ -1,7 +1,9 @@
-torch
+torch==2.2.0
+setuptools
+wheel
 torchvision
 torchaudio
 streamlit
 sentence-transformers
 audiocraft
-music12
+music21
